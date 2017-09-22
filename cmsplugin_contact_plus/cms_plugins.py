@@ -10,8 +10,11 @@ from cmsplugin_contact_plus.forms import ContactFormPlus
 
 from .exceptions import MakeRedirectException
 
-
 import time
+
+
+RECAPTCHA_PUBLIC_KEY = getattr(settings, 'RECAPTCHA_PUBLIC_KEY', None)
+
 
 def handle_uploaded_file(f, ts):
     destination = open('%s/%s' % (settings.MEDIA_ROOT, ts + '-' + f.name), 'wb+')
@@ -56,6 +59,7 @@ class CMSContactPlusPlugin(CMSPluginBase):
                 context.update({
                     'contact': instance,
                     'form': form,
+                    'RECAPTCHA_PUBLIC_KEY': RECAPTCHA_PUBLIC_KEY,
                 })
 
         else:
@@ -66,6 +70,7 @@ class CMSContactPlusPlugin(CMSPluginBase):
             context.update({
                     'contact': instance,
                     'form': form,
+                    'RECAPTCHA_PUBLIC_KEY': RECAPTCHA_PUBLIC_KEY,
             })
         return context
 

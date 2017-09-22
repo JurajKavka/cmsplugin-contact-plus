@@ -1,6 +1,11 @@
+import logging
+import sys
+import requests
+
 from django.utils.http import urlquote
 from django import forms
 from django.core.mail import EmailMessage
+from django.core.exceptions import ImproperlyConfigured
 from django.template.loader import render_to_string
 from django.contrib.sites.models import Site
 from django.template.defaultfilters import slugify
@@ -12,6 +17,16 @@ from simplemathcaptcha.fields import MathCaptchaField
 from cmsplugin_contact_plus.models import ContactPlus, ContactRecord
 from cmsplugin_contact_plus.signals import contact_message_sent
 from cmsplugin_contact_plus.utils import get_validators
+
+
+logger = logging.getLogger(__name__)
+
+
+RECAPTCHA_PRIVATE_KEY = getattr(settings, 'RECAPTCHA_PRIVATE_KEY', None)
+
+FIELD_NAME_MAPPING = {
+    'g_recaptcha_response': 'g-recaptcha-response',
+}
 
 class ContactFormPlus(forms.Form):
     required_css_class = getattr(settings, 'CONTACT_PLUS_REQUIRED_CSS_CLASS', 'required')
@@ -131,6 +146,12 @@ class ContactFormPlus(forms.Form):
                         ),
                         required=extraField.required,
                         validators=get_validators())
+                elif extraField.fieldType == 'InvisibleRecaptcha':
+                    self.fields['g_recaptcha_response'] = forms.CharField(
+                        label='g-recaptcha-response',
+                        widget=forms.HiddenInput,
+                        required=False,
+                    )
 
 
     def send(self, recipient_email, request, ts, instance=None, multipart=False):
@@ -189,3 +210,56 @@ class ContactFormPlus(forms.Form):
             record.save()
 
         contact_message_sent.send(sender=self, data=self.cleaned_data)
+
+    def get_remote_ip(self):
+        """
+        ... from django-recaptcha project. Thank you.
+        """
+        f = sys._getframe()
+        while f:
+            if 'request' in f.f_locals:
+                request = f.f_locals['request']
+                if request:
+                    remote_ip = request.META.get('REMOTE_ADDR', '')
+                    forwarded_ip = request.META.get('HTTP_X_FORWARDED_FOR', '')
+                    ip = remote_ip if not forwarded_ip else forwarded_ip
+                    return ip
+            f = f.f_back
+
+    def add_prefix(self, field_name):
+        """
+        ... stackoverflow answer https://stackoverflow.com/a/8802119
+        """
+        # look up field name; return original if not found
+        field_name = FIELD_NAME_MAPPING.get(field_name, field_name)
+        return super(ContactFormPlus, self).add_prefix(field_name)
+
+    def clean(self):
+        cleaned_data = super(ContactFormPlus, self).clean()
+        if 'g_recaptcha_response' in cleaned_data:
+            if not RECAPTCHA_PRIVATE_KEY:
+                raise ImproperlyConfigured('If you are working with reCaptcha, please provide RECAPTCHA_PRIVATE_KEY setting!')
+            verify_data = {
+                    'secret': RECAPTCHA_PRIVATE_KEY,
+                    'response': cleaned_data['g_recaptcha_response'],
+                    'remoteip': self.get_remote_ip(),
+            }
+
+            body = None
+            try:
+                response = requests.post('https://www.google.com/recaptcha/api/siteverify', 
+                                         data=verify_data)
+                response.raise_for_status()
+                body = response.json()
+                if not body['success']:
+                    raise Exception()
+            except (requests.RequestException, requests.ConnectionError) as e:
+                logger.error('reCaptcha: {}'.format(e))
+                raise forms.ValidationError(
+                    _(u'Sory, email was not sent. Check your internet connection!')
+                )
+            except Exception as e:
+                logger.error('reCaptcha: {}, status: {}'.format(body, response.status_code))
+                raise forms.ValidationError(
+                    _(u'Sory, email was not sent. Try again later and please, DO NOT CHEAT!')
+                )
