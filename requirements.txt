@@ -3,3 +3,4 @@ django-simple-math-captcha
 jsonfield
 django-recaptcha
 six
+requests
