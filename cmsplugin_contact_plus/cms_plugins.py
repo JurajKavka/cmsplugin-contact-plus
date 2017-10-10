@@ -33,6 +33,10 @@ class CMSContactPlusPlugin(CMSPluginBase):
     render_template = "cmsplugin_contact_plus/contact.html"
     change_form_template = 'cmsplugin_contact_plus/change_form.html'
     cache = False
+    text_enabled = True
+
+    def icon_src(self, instance):
+        return settings.STATIC_URL + "cms/img/icons/plugins/link.png"
 
     def render(self, context, instance, placeholder):
         request = context['request']
